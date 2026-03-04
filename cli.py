@@ -16,7 +16,7 @@ from PIL import Image
 
 class HuatuoChatbot():
     #def __init__(self, model_dir, device = 'cuda'):
-    def __init__(self, model_dir, device = 'mps'):
+    def __init__(self, model_dir, device = "cuda"):
         self.model_dir = model_dir
 
         self.gen_kwargs = {

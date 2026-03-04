@@ -37,7 +37,7 @@ class TestDataset(torch.utils.data.Dataset):
         self.config = config
         self.dataset = {}
         with open(data_path) as f:
-            self.dataset = json.load(f)
+            self.dataset = [json.loads(line) for line in f if line.strip()]
         self.datas = []
 
         test_id = 1
@@ -138,12 +138,13 @@ def test(args):
         torch.cuda.empty_cache()
         accelerator.wait_for_everyone()
         
-        all_data =  [None] * dist.get_world_size()
-        all_response =  [None] * dist.get_world_size()
-
-        dist.all_gather_object(all_data,cache_data)
-
-        all_data = [item for sublist in all_data for item in sublist]
+        if dist.is_initialized():
+            all_data = [None] * dist.get_world_size()
+            all_response = [None] * dist.get_world_size()
+            dist.all_gather_object(all_data, cache_data)
+            all_data = [item for sublist in all_data for item in sublist]
+        else:
+            all_data = cache_data
 
         for d in all_data:
             ress.append(d)
