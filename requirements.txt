@@ -12,7 +12,7 @@ scikit-learn==1.2.2
 sentencepiece==0.1.99
 shortuuid==1.0.11
 timm==0.6.13
-tokenizers==0.13.3
+tokenizers
 wandb==0.15.12
 wavedrom==2.0.3.post3
 Pygments==2.16.1
