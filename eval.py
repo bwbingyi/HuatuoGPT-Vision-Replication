@@ -128,12 +128,19 @@ def test(args):
         dataloader_iterator = tqdm(val_dataloader, total=len(val_dataloader)) if accelerator.is_main_process else val_dataloader
 
         for batch in dataloader_iterator:
-            for da,query,image in zip(batch["data"],batch['query'],batch['image']):
-                response = bot.inference(query,[os.path.join(os.path.dirname(args.data_path),x) for x in image])
-                for img in [os.path.join(os.path.dirname(args.data_path),x) for x in image]:
-                    assert os.path.exists(img),f'{img} not exists'
+            for da, query, image in zip(batch["data"], batch['query'], batch['image']):
+                response = bot.inference(query, [os.path.join(os.path.dirname(args.data_path), x) for x in image])
+                for img in [os.path.join(os.path.dirname(args.data_path), x) for x in image]:
+                    assert os.path.exists(img), f'{img} not exists'
                 da['model_output'] = response[0]
                 cache_data.append(da)
+            
+            if len(cache_data) % 500 == 0:
+                with open('./cache_checkpoint.json', 'w') as fw:
+                    json.dump(cache_data, fw, ensure_ascii=False)
+        
+        with open('./cache_checkpoint.json', 'w') as fw:
+            json.dump(cache_data, fw, ensure_ascii=False)
 
         torch.cuda.empty_cache()
         accelerator.wait_for_everyone()
