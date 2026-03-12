@@ -318,10 +318,9 @@ def train(args: argparse.Namespace) -> None:
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=args.train_bsz_per_gpu,
-        shuffle=True,
         drop_last=True,
         collate_fn=train_dataset.collate_fn,
-        num_workers=4
+        num_workers=0
     )
 
     num_training_steps = int(len(train_dataloader) * args.n_epochs) // accelerator.gradient_accumulation_steps // dist.get_world_size()
