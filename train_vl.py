@@ -349,9 +349,9 @@ def train(args: argparse.Namespace) -> None:
         for batch in train_iter:
             if global_step >= args.max_steps:
                 break
-            if inepoch_step > 0:
-                inepoch_step -= 1
-                continue
+            #if inepoch_step > 0:
+                #inepoch_step -= 1
+                #continue
 
             outputs = model(
                 input_ids=batch['input_ids'],
