@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import wandb
 import datasets
+from datasets import load_dataset, IterableDataset
 from tqdm import tqdm
 import gc
 from jinja2 import Template
