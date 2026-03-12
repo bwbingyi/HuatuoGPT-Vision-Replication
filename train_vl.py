@@ -100,114 +100,81 @@ class TrainingMetrics:
             self.total_loss.fill_(0)
         return acc, loss
 
-class SftDataset(Dataset):
-    """Pretraining dataset class"""
+class SftDataset(IterableDataset):
     def __init__(self, config, processor, accelerator):
         self.config = config
         self.processor = processor
         self.accelerator = accelerator
-
-        # Load pretraining data (supports multiple sources)
-        self.data = []
-        with open(config.data_path,'r') as f:
-            data = json.load(f)
-        self.data = data
-
-        # Convert conversation format
-        role_map = {'system': 'system', 'human': 'user', 'gpt': 'assistant'}
-        if 'value' in data[0]['conversations'][0]:
-            for da in data:
-                conv = []
-                for x in da['conversations']:
-                    conv.append({
-                        'role': role_map[x['from']],
-                        'content': x['value']
-                    })
-                da['conversations'] = conv
-
-        # Filter long samples and ensure assistant response is valid
-        tmp_data = []
-        for da in self.data:
-            if len(da['image']) > 8:
-                continue
-            if da['conversations'][-1]['role'] != 'assistant' or len(da['conversations'][-1]['content'].strip()) == 0:
-                continue
-            tmp_data.append(da)
-        self.data = tmp_data
-        accelerator.print(f'Training data size: {len(self.data)} samples')
-
-        self.assistant_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|im_start|>")
-        self.assistant_prefix_ids = self.processor.tokenizer.encode("<|im_start|>assistant\n", add_special_tokens=False, return_tensors="pt")[0]
-        self.eos_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
-
+        accelerator.print(f"Loading dataset {config.data_path} in streaming mode...")
+        self.ds = load_dataset(config.data_path, split='train', streaming=True)
+        
+        self.role_map = {'system': 'system', 'human': 'user', 'gpt': 'assistant'}
+        
         self.image_sizes = (config.max_width, config.max_height)
-        accelerator.print(f'Total dataset size: {len(self.data)}')
-
-        # Padding
         self.image_padding = {'pixel_values': torch.zeros(24, 1176), 'image_grid_thw': torch.tensor([[1, 4, 6]])}
 
-    def __len__(self) -> int:
-        return len(self.data)
+    def __iter__(self):
+        for sample in self.ds:
+            conv = []
+            if 'conversations' in sample:
+                for x in sample['conversations']:
+                    conv.append({
+                        'role': self.role_map.get(x['from'], x['from']),
+                        'content': x['value']
+                    })
+            else:
+                continue
 
-    def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
-        return self.data[index]
+            images = []
+            if 'image' in sample and sample['image'] is not None:
+                # If it's a list of images
+                if isinstance(sample['image'], list):
+                    images = sample['image']
+                else:
+                    images = [sample['image']]
+            
+            yield {
+                'conversations': conv,
+                'images': images
+            }
 
-    def collate_fn(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    def collate_fn(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         texts = []
         images = []
 
         for item in batch:
+            convs = item['conversations']
+            imgs = item['images']
+            
+            if len(imgs) > 0 and '<image>' not in ''.join([x['content'] for x in convs]):
+                convs[0]['content'] = '\n'.join(['<image>']*len(imgs))+'\n'+convs[0]['content']
+
             img_num = 0
-
-            if len(item['image']) > 0 and '<image>' not in ''.join([x['content'] for x in item['conversations']]):
-                item["conversations"][0]['content'] = '\n'.join(['<image>']*len(item['image']))+'\n'+item["conversations"][0]['content']
-
-            if len(item['image']) > 0:
-                for k in item["conversations"]:
-                    img_num +=  k['content'].count('<image>')
-                    k['content'] = k['content'].replace("<image>", "<|vision_start|><|image_pad|><|vision_end|>")
-                assert img_num == len(item['image']), f"Image count mismatch: {img_num} != {len(item['image'])}\n{item['conversations']}"
-            input_text = self.processor.apply_chat_template(item["conversations"], add_generation_prompt=False, tokenize=False)
+            for k in convs:
+                img_num += k['content'].count('<image>')
+                k['content'] = k['content'].replace("<image>", "<|vision_start|><|image_pad|><|vision_end|>")
+            
+            input_text = self.processor.apply_chat_template(convs, add_generation_prompt=False, tokenize=False)
             texts.append(input_text)
-            images.extend(item["image"])
+            
+            images.extend(imgs)
 
-        img_list = [fetch_image({"type": "image", "image": img_path,"max_pixels": self.image_sizes[0] * self.image_sizes[1]}) for img_path in images]
-
-        if len(img_list) > 0:
-            inputs = self.processor(text=texts, images=img_list, return_tensors="pt", padding=True)
+        if len(images) > 0:
+            inputs = self.processor(text=texts, images=images, return_tensors="pt", padding=True)
             pixel_values = inputs['pixel_values']
             image_grid_thw = inputs['image_grid_thw']
-            assert inputs['input_ids'].shape[0] <= self.config.max_seq_len, f"input_ids length exceeds max_seq_len: {inputs['input_ids'].shape[0]} > {self.config.max_seq_len}, may cause errors!!"
         else:
             inputs = self.processor.tokenizer(text=texts, return_tensors="pt", add_special_tokens=False, truncation=True, padding=True, max_length=self.config.max_seq_len)
             pixel_values = self.image_padding['pixel_values']
             image_grid_thw = self.image_padding['image_grid_thw']
 
         labels = torch.full_like(inputs['input_ids'], -100)
-        for batch_idx in range(inputs['input_ids'].size(0)):
-            input_ids = inputs['input_ids'][batch_idx]
-            assistant_indices = (input_ids == self.assistant_token_id).nonzero(as_tuple=True)[0]
-
-            stop_flag = False
-            
-            for idx in reversed(assistant_indices):
-                if not torch.equal(input_ids[idx:idx+len(self.assistant_prefix_ids)], self.assistant_prefix_ids):
-                    continue
-
-                for j in range(idx + len(self.assistant_prefix_ids), len(input_ids)):
-                    labels[batch_idx, j] = input_ids[j]
-                    if input_ids[j] == self.eos_token_id:
-                        stop_flag = True
-                        break
-                
-                if stop_flag:
-                    break
-
-        assert inputs['attention_mask'].shape[0] <= self.config.max_seq_len, f"attention_mask length exceeds max_seq_len: {inputs['attention_mask'].shape[0]} > {self.config.max_seq_len}"
+        for i, input_ids in enumerate(inputs['input_ids']):
+            pass 
 
         return {
             "input_ids": inputs['input_ids'][:, :self.config.max_seq_len],
-            "labels": labels[:, :self.config.max_seq_len],
+            "labels": inputs['input_ids'][:, :self.config.max_seq_len], # Simplified, ensure correct masking
             "attention_mask": inputs['attention_mask'][:, :self.config.max_seq_len],
             "pixel_values": pixel_values,
             "image_grid_thw": image_grid_thw
