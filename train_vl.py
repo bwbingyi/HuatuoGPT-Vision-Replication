@@ -257,7 +257,7 @@ def train(args: argparse.Namespace) -> None:
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         args.model_path,
         trust_remote_code=True,
-        attn_implementation='flash_attention_2',
+        attn_implementation='eager',
         torch_dtype=torch.bfloat16
     )
 
