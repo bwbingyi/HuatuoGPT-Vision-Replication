@@ -323,7 +323,11 @@ def train(args: argparse.Namespace) -> None:
         num_workers=0
     )
 
-    num_training_steps = int(len(train_dataloader) * args.n_epochs) // accelerator.gradient_accumulation_steps // dist.get_world_size()
+    if args.max_steps > 0:
+        num_training_steps = args.max_steps
+    else:
+        num_training_steps = 10000 
+        
     lr_scheduler = get_custom_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=int(args.warmup_rates * num_training_steps),
