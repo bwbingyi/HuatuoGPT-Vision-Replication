@@ -55,16 +55,19 @@ def main():
     skipped_count = 0
 
     for key in vl_model_state_dict.keys():
-        if key in lm_state_dict and vl_model_state_dict[key].shape == lm_state_dict[key].shape:
-            new_vl_model_state_dict[key] = lm_state_dict[key]
-            replaced_count += 1
+    # Map VL key to LLM key by removing "language_model." prefix
+    lm_key = key.replace("model.language_model.", "model.")
+    
+    if lm_key in lm_state_dict and vl_model_state_dict[key].shape == lm_state_dict[lm_key].shape:
+        new_vl_model_state_dict[key] = lm_state_dict[lm_key]
+        replaced_count += 1
+    else:
+        new_vl_model_state_dict[key] = vl_model_state_dict[key]
+        skipped_count += 1
+        if lm_key not in lm_state_dict:
+            print(f"Parameter not found in LLM model: {key}")
         else:
-            new_vl_model_state_dict[key] = vl_model_state_dict[key]
-            skipped_count += 1
-            if key not in lm_state_dict:
-                print(f"Parameter not found in LLM model: {key}")
-            else:
-                print(f"Shape mismatch - skipping: {key}, VL shape: {vl_model_state_dict[key].shape}, LLM shape: {lm_state_dict[key].shape}")
+            print(f"Shape mismatch - skipping: {key}, VL shape: {vl_model_state_dict[key].shape}, LLM shape: {lm_state_dict[lm_key].shape}")
 
     model_vl.load_state_dict(new_vl_model_state_dict)
     print(f"\nParameter replacement completed! Replaced: {replaced_count}, Skipped: {skipped_count}")
