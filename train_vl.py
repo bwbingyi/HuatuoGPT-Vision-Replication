@@ -343,6 +343,8 @@ def train(args: argparse.Namespace) -> None:
         train_iter = tqdm(train_dataloader, total=len(train_dataloader)) if accelerator.is_main_process else train_dataloader
 
         for batch in train_iter:
+            if global_step >= args.max_steps:
+                break
             if inepoch_step > 0:
                 inepoch_step -= 1
                 continue
@@ -435,6 +437,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_steps', type=int, default=2000, help='Checkpoint saving interval')
     parser.add_argument('--save_state', action='store_true', help='Save accelerator state')
     parser.add_argument('--resume_from_checkpoint', action='store_true', help='Resume from checkpoint')
+    parser.add_argument('--max_steps', type=int, default=-1, help='Max training steps (required for streaming)')
 
     parser.add_argument('--freeze_vision_tower', action='store_true', help='Freeze vision tower')
     parser.add_argument('--freeze_language_model', action='store_true', help='Freeze language model')
